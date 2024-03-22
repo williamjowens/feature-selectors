@@ -14,7 +14,7 @@ from sklearn.pipeline import Pipeline
 class CMAESFeatureSelector(BaseEstimator, TransformerMixin):
     def __init__(self, estimator, sigma=0.5, n_population=50, n_generations=100,
                  scoring=None, cv=5, verbose=0, random_state=None, early_stopping=10,
-                 n_jobs=None, cma_options=None):
+                 n_jobs=None, cma_options=None, min_features=1, penalty_factor=0.1):
         self.estimator = estimator
         self.sigma = sigma
         self.n_population = n_population
@@ -26,20 +26,32 @@ class CMAESFeatureSelector(BaseEstimator, TransformerMixin):
         self.early_stopping = early_stopping
         self.n_jobs = n_jobs
         self.cma_options = cma_options
+        self.min_features = min_features
+        self.penalty_factor = penalty_factor
         self.scaler = StandardScaler()
 
     def _evaluate_fitness(self, individual, X, y):
         mask = individual[:-1] >= 0.5
+        n_selected_features = np.sum(mask)
+        
+        if n_selected_features < self.min_features:
+            penalty = self.penalty_factor
+        else:
+            penalty = 1.0
+        
+        if n_selected_features == 0:
+            return -np.inf
+        
         X_subset = X[:, mask]
         scorer = get_scorer(self.scoring)
         scores = cross_val_score(self.estimator, X_subset, y, cv=self.cv, scoring=scorer,
                                  n_jobs=self.n_jobs)
-        return np.mean(scores)
+        return np.mean(scores) * penalty
 
     def _cmaes_optimization(self, X, y):
         n_features = X.shape[1]
         mean = np.zeros(n_features + 1)
-        mean[-1] = 0.5  # Initial mean for the number of features
+        mean[-1] = 0.5
         cov = np.eye(n_features + 1)
 
         if self.cma_options is None:
@@ -60,7 +72,13 @@ class CMAESFeatureSelector(BaseEstimator, TransformerMixin):
 
         for generation in range(self.n_generations):
             population = es.ask()
+            population = np.array(population)
             population[:, -1] = np.clip(population[:, -1], 0, 1)
+
+            # Ensure a minimum number of features are selected
+            population[:, :-1] = np.where(population[:, :-1] < 0.5, 0, 1)
+            feature_counts = np.sum(population[:, :-1], axis=1)
+            population[feature_counts < self.min_features, :-1] = 1
 
             fitness_values = [self._evaluate_fitness(individual, X, y) for individual in population]
 
@@ -99,7 +117,8 @@ class CMAESFeatureSelector(BaseEstimator, TransformerMixin):
         self._cmaes_optimization(X, y)
 
         self.support_ = self.best_individual_[:-1] >= 0.5
-        self.n_features_ = int(np.round(self.best_individual_[-1] * X.shape[1]))
+        self.n_features_ = int(np.sum(self.support_))
+        self.feature_names_ = np.array(range(X.shape[1]))[self.support_]
 
         if self.verbose > 0:
             print(f"Best individual: {self.best_individual_}")
@@ -117,6 +136,10 @@ class CMAESFeatureSelector(BaseEstimator, TransformerMixin):
     def _more_tags(self):
         return {'requires_y': True}
 
+    def get_support(self, indices=False):
+        check_is_fitted(self, ['support_', 'feature_names_'])
+        return self.support_ if not indices else self.feature_names_
+
 ##################
 # Implementation #
 ##################
@@ -125,6 +148,7 @@ if __name__ == '__main__':
     # Load the benchmark dataset
     data = load_breast_cancer()
     X, y = data.data, data.target
+    feature_names = data.feature_names
 
     # Split the data into training and testing sets
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -150,6 +174,6 @@ if __name__ == '__main__':
     accuracy = pipeline.score(X_test, y_test)
     print(f"\nTest Accuracy: {accuracy:.4f}")
 
-    # Get the selected features
-    selected_features = X_train.columns[selector.support_].tolist()
-    print(f"\nSelected Features: {selected_features}")
+    # Get the selected feature names
+    selected_feature_names = feature_names[selector.get_support(indices=True)]
+    print(f"\nSelected Features: {selected_feature_names}")
