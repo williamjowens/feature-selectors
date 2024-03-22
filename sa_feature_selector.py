@@ -44,6 +44,8 @@ class SimulatedAnnealingFeatureSelector(BaseEstimator, TransformerMixin):
         current_energy = self._calculate_energy(current_state, X, y)
         best_state = current_state
         best_energy = current_energy
+        best_iteration = 0
+        patience = 50
 
         temp = self.initial_temp
 
@@ -57,6 +59,7 @@ class SimulatedAnnealingFeatureSelector(BaseEstimator, TransformerMixin):
                 if current_energy < best_energy:
                     best_state = current_state
                     best_energy = current_energy
+                    best_iteration = i
             else:
                 acceptance_prob = np.exp((current_energy - new_energy) / temp)
                 if np.random.rand() < acceptance_prob:
@@ -67,6 +70,11 @@ class SimulatedAnnealingFeatureSelector(BaseEstimator, TransformerMixin):
 
             if self.verbose > 0 and (i + 1) % (self.n_iterations // 10) == 0:
                 print(f"Iteration {i + 1}/{self.n_iterations}, Best energy: {best_energy:.4f}")
+
+            if i - best_iteration >= patience:
+                if self.verbose > 0:
+                    print(f"Early stopping at iteration {i + 1}")
+                break
 
         self.best_state_ = best_state
         self.best_energy_ = best_energy
