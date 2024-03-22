@@ -75,7 +75,6 @@ class CMAESFeatureSelector(BaseEstimator, TransformerMixin):
             population = np.array(population)
             population[:, -1] = np.clip(population[:, -1], 0, 1)
 
-            # Ensure a minimum number of features are selected
             population[:, :-1] = np.where(population[:, :-1] < 0.5, 0, 1)
             feature_counts = np.sum(population[:, :-1], axis=1)
             population[feature_counts < self.min_features, :-1] = 1
